@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+python-multipart
+aiofiles
+python-dotenv
+langchain
+langchain-google-genai
+langchain-community
+langchain-groq
+langchain-text-splitters
+langsmith
+supabase
+pydantic

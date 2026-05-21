@@ -1,0 +1,22 @@
+# Ambiente virtual
+venv/
+env/
+.venv/
+
+# Variáveis de ambiente
+.env
+
+# Cache do Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Cache do HuggingFace (modelos locais)
+.cache/
+
+# Arquivos temporários
+*.tmp
+*.wav
+*.pdf
