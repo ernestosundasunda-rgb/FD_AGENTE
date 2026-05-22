@@ -1,7 +1,6 @@
 import os
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Dict, List
 from dotenv import load_dotenv
@@ -24,8 +23,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Servir ficheiros estáticos (frontend)
-app.mount("/static", StaticFiles(directory="static"), name="static")
+
 
 # Cliente Supabase para persistência do histórico
 supabase: Client = create_client(
