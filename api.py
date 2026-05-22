@@ -91,11 +91,18 @@ def chat_endpoint(input: PerguntaInput):
     pergunta = input.pergunta
     session_id = input.session_id
 
-    # Adicionar pergunta do utilizador ao histórico
+    # Guardar a pergunta do utilizador no Supabase
     add_to_history(session_id, "user", pergunta)
 
-    # Recuperar histórico atualizado
+    # Recuperar o histórico mais recente
     history = get_history(session_id)
+
+    # LOG DE DEPURAÇÃO
+    print(f"\n=== Sessão: {session_id} ===")
+    print(f"Histórico ({len(history)} mensagens):")
+    for msg in history:
+        print(f"  [{msg['role']}] {msg['content'][:80]}...")
+    print(f"Nova pergunta: {pergunta}")
 
     entrada = {
         "input": pergunta,
@@ -107,11 +114,7 @@ def chat_endpoint(input: PerguntaInput):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    # Adicionar resposta do assistente ao histórico
+    # Guardar a resposta do assistente no Supabase
     add_to_history(session_id, "assistant", resposta)
 
     return {"resposta": resposta, "session_id": session_id}
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("api:app", host="0.0.0.0", port=8000, reload=True)
