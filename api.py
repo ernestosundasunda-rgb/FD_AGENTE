@@ -1,28 +1,21 @@
-import sys
+import os
 from fastapi import FastAPI, HTTPException
-from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from typing import Dict, List
 from dotenv import load_dotenv
-from langchain_core.runnables import RunnableLambda, RunnableParallel
-from operator import itemgetter
+from supabase.client import create_client, Client
 
-from chains.chain_rag_duvidas import chain_orientador
 from chains.chain_geral import chain_temas_nao_relacionados
 from chains.chain_classifica import chain_de_roteamento
+from chains.chain_rag_duvidas import chain_orientador
 
 load_dotenv()
 
-# ------------------------------
-# Inicialização do FastAPI
-# ------------------------------
-app = FastAPI(
-    title="Assistente FD-UNIKIVI",
-    description="API do assistente virtual da Faculdade de Direito da Universidade Kimpa Vita",
-    version="1.0.0"
-)
+app = FastAPI()
 
-# Configuração CORS para permitir acesso de qualquer origem (ajuste em produção)
+# CORS – permite todas as origens para testes
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -31,63 +24,94 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Montar pasta de arquivos estáticos (opcional, para o cliente web)
-try:
-    app.mount("/static", StaticFiles(directory="static"), name="static")
-except:
-    pass  # ignora se a pasta não existir
+# Servir ficheiros estáticos (frontend)
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# ------------------------------
-# Chains (reaproveitadas)
-# ------------------------------
+# Cliente Supabase para persistência do histórico
+supabase: Client = create_client(
+    os.getenv("SUPABASE_URL"),
+    os.getenv("SUPABASE_SERVICE_KEY")
+)
+
+# ---------- Modelos ----------
+class PerguntaInput(BaseModel):
+    pergunta: str
+    session_id: str = "default"
+
+# ---------- Gestão de histórico no Supabase ----------
+def get_history(session_id: str) -> List[Dict]:
+    result = supabase.table("historico_sessoes")\
+        .select("role, content")\
+        .eq("session_id", session_id)\
+        .order("criado_em")\
+        .execute()
+    return result.data
+
+def add_to_history(session_id: str, role: str, content: str):
+    supabase.table("historico_sessoes").insert({
+        "session_id": session_id,
+        "role": role,
+        "content": content
+    }).execute()
+
+# ---------- Chain principal (roteamento) ----------
+from operator import itemgetter
+from langchain_core.runnables import RunnableLambda, RunnableParallel
+
 def executa_roteamento(entrada: dict):
     pergunta = entrada["input"]
+    history = entrada.get("history", [])
     try:
         rota = entrada["resposta_pydantic"].opcao
-    except Exception:
-        # Se a classificação falhar, assume que é fora do tema
-        return chain_temas_nao_relacionados.invoke({"input": pergunta})
+    except Exception as e:
+        print(f"⚠️ Erro na classificação: {e}. A enviar para chain geral.")
+        return chain_temas_nao_relacionados.invoke({"input": pergunta, "history": history})
 
     if rota == 1:
-        return chain_orientador.invoke({"input": pergunta})
+        return chain_orientador.invoke({"input": pergunta, "history": history})
     else:
-        return chain_temas_nao_relacionados.invoke({"input": pergunta})
+        return chain_temas_nao_relacionados.invoke({"input": pergunta, "history": history})
 
 chain_principal = (
     RunnableParallel({
         "input": itemgetter("input"),
+        "history": itemgetter("history"),
         "resposta_pydantic": chain_de_roteamento
     })
     | RunnableLambda(executa_roteamento)
 )
 
-# ------------------------------
-# Modelos de requisição/resposta
-# ------------------------------
-class Pergunta(BaseModel):
-    pergunta: str
-
-class Resposta(BaseModel):
-    resposta: str
-
-# ------------------------------
-# Endpoints
-# ------------------------------
+# ---------- Endpoints ----------
 @app.get("/")
-def root():
+def read_root():
     return {"status": "online", "message": "Assistente FD-UNIKIVI"}
 
-@app.post("/chat", response_model=Resposta)
-def chat_endpoint(pergunta: Pergunta):
+@app.post("/chat")
+def chat_endpoint(input: PerguntaInput):
+    pergunta = input.pergunta
+    session_id = input.session_id
+
+    # Adicionar pergunta do utilizador ao histórico
+    add_to_history(session_id, "user", pergunta)
+
+    # Recuperar histórico atualizado
+    history = get_history(session_id)
+
+    entrada = {
+        "input": pergunta,
+        "history": history
+    }
+
     try:
-        resposta = chain_principal.invoke({"input": pergunta.pergunta})
-        return Resposta(resposta=resposta)
+        resposta = chain_principal.invoke(entrada)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ------------------------------
-# Execução
-# ------------------------------
+    # Adicionar resposta do assistente ao histórico
+    add_to_history(session_id, "assistant", resposta)
+
+    return {"resposta": resposta, "session_id": session_id}
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run("api:app", host="0.0.0.0", port=8000, reload=True)
